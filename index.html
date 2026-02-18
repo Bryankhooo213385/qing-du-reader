@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>清读 - 多格式电子书阅读器</title>
+    <!-- 引入解析库：PDF.js, JSZip 和 Epub.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #1a1a1a;
+            --accent-color: #0056b3;
+            --nav-bg: #f8f9fa;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            line-height: 1.8;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+
+        header {
+            background-color: var(--nav-bg);
+            padding: 1rem;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .btn {
+            padding: 0.6rem 1.2rem;
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .btn-outline {
+            background-color: transparent;
+            color: var(--accent-color);
+            border: 1px solid var(--accent-color);
+        }
+
+        main {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 1.5rem;
+        }
+
+        .book-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .book-card {
+            border: 1px solid #eee;
+            padding: 1.5rem;
+            border-radius: 12px;
+            text-align: center;
+            background: #fff;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+
+        .import-section {
+            background: #eef2f7;
+            padding: 2rem;
+            border-radius: 12px;
+            text-align: center;
+            border: 2px dashed var(--accent-color);
+            margin-bottom: 2rem;
+        }
+
+        .content-area {
+            font-size: 1.3rem;
+            white-space: pre-wrap; 
+            word-wrap: break-word;
+            word-break: break-all;
+            text-align: justify;
+        }
+
+        .nav-footer {
+            margin-top: 3rem;
+            padding: 1.5rem 0;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.9);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            flex-direction: column;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #121212;
+                --text-color: #e0e0e0;
+                --nav-bg: #1e1e1e;
+                --accent-color: #90caf9;
+            }
+            .book-card { background: #1e1e1e; border-color: #333; }
+            .import-section { background: #1a1a1a; }
+            .loading-overlay { background: rgba(0,0,0,0.85); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="loading" class="loading-overlay" aria-live="assertive">
+    <div style="font-size: 1.2rem; margin-bottom: 10px;">正在解析书籍内容...</div>
+    <div id="loading-detail" style="font-size: 0.9rem; opacity: 0.8;">解析 EPUB 章节可能需要一点时间</div>
+</div>
+
+<header>
+    <div id="nav-title" style="font-weight: bold;">清读</div>
+    <nav>
+        <button class="btn btn-outline" onclick="showShelf()" id="btn-shelf" style="display:none;">回到书架</button>
+    </nav>
+</header>
+
+<main id="app-root"></main>
+
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    let books = [];
+    const STORAGE_KEY = 'pure_read_local_books';
+
+    function initData() {
+        const localBooks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+        const defaultBooks = [
+            {
+                id: 'default-1',
+                title: "朝花夕拾 (示例)",
+                author: "鲁迅",
+                chapters: [{ title: "示例", content: "欢迎使用清读。请点击“导入书籍”来添加您自己的 PDF 或 EPUB 文件。" }]
+            }
+        ];
+        books = [...defaultBooks, ...localBooks];
+    }
+
+    async function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const loading = document.getElementById('loading');
+        loading.style.display = 'flex';
+
+        try {
+            if (file.type === 'application/pdf') {
+                await processPDF(file);
+            } else if (file.name.toLowerCase().endsWith('.epub')) {
+                await processEpub(file);
+            } else {
+                alert("目前支持 PDF 及 EPUB 格式。");
+            }
+        } catch (error) {
+            console.error("解析错误:", error);
+            alert("书籍解析失败: " + error.message);
+        } finally {
+            loading.style.display = 'none';
+        }
+    }
+
+    async function processPDF(file) {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+        let chapters = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            let lastY = -1;
+            let pageText = "";
+            for (let item of textContent.items) {
+                const currentY = item.transform[5];
+                if (lastY !== -1 && Math.abs(lastY - currentY) > 5) pageText += "\n";
+                else if (lastY !== -1) pageText += " ";
+                pageText += item.str;
+                lastY = currentY;
+            }
+            chapters.push({ title: `第 ${i} 页`, content: pageText.trim() });
+        }
+        saveBook(file.name.replace('.pdf', ''), "PDF 导入", chapters);
+    }
+
+    async function processEpub(file) {
+        const arrayBuffer = await file.arrayBuffer();
+        const book = ePub(arrayBuffer);
+        
+        await book.ready;
+        
+        const navigation = await book.loaded.navigation;
+        const spine = book.spine;
+        
+        let chapters = [];
+        
+        for (let i = 0; i < spine.items.length; i++) {
+            const item = spine.items[i];
+            
+            try {
+                // 使用更兼容的方式读取内容
+                const contents = await book.load(item.href);
+                let doc;
+
+                // 兼容处理：epub.js 有时返回字符串，有时返回文档对象
+                if (typeof contents === 'string') {
+                    const parser = new DOMParser();
+                    // 优先尝试 XML/XHTML 模式
+                    doc = parser.parseFromString(contents, 'application/xhtml+xml');
+                    // 如果解析错误，尝试 HTML 模式
+                    if (doc.querySelector("parsererror")) {
+                        doc = parser.parseFromString(contents, 'text/html');
+                    }
+                } else if (contents instanceof Document) {
+                    doc = contents;
+                } else {
+                    continue;
+                }
+
+                if (!doc || !doc.body) continue;
+
+                // 获取标题
+                let chTitle = "章节 " + (i + 1);
+                const navItem = navigation.get(item.href);
+                if (navItem && navItem.label) {
+                    chTitle = navItem.label.trim();
+                } else if (doc.title && doc.title.trim().length > 0) {
+                    chTitle = doc.title.trim();
+                }
+
+                // 提取文本 (优先使用 textContent，因为它在非渲染 DOM 中更可靠)
+                let text = doc.body.textContent;
+                
+                if (text && text.trim().length > 0) {
+                    chapters.push({
+                        title: chTitle,
+                        // 简单的格式清理：合并过多空行，但保留段落感
+                        content: text.trim().replace(/\n\s*\n/g, '\n\n')
+                    });
+                } else {
+                    // 如果没有文字，检查是否是图片页
+                    const imgs = doc.querySelectorAll('img, image');
+                    if (imgs.length > 0) {
+                        chapters.push({
+                            title: chTitle,
+                            content: `[本章节含有 ${imgs.length} 张图片，无法在纯文本模式下显示]`
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn("跳过无法解析的章节:", item.href, e);
+            }
+        }
+
+        if (chapters.length === 0) throw new Error("无法从该 EPUB 中提取文字，请确认文件未加密且包含文字内容。");
+        
+        saveBook(file.name.replace('.epub', ''), "EPUB 导入", chapters);
+    }
+
+    function saveBook(title, author, chapters) {
+        const newBook = {
+            id: Date.now().toString(),
+            title: title,
+            author: author,
+            chapters: chapters
+        };
+        const localBooks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+        localBooks.push(newBook);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(localBooks));
+        showShelf();
+    }
+
+    function showShelf() {
+        initData();
+        const root = document.getElementById('app-root');
+        document.getElementById('nav-title').textContent = "书架";
+        document.getElementById('btn-shelf').style.display = 'none';
+
+        root.innerHTML = `
+            <section class="import-section">
+                <h2>导入书籍</h2>
+                <p>支持 PDF 及 EPUB 格式</p>
+                <input type="file" id="file-upload" accept=".pdf,.epub" style="display:none" onchange="handleFileSelect(event)">
+                <button class="btn" onclick="document.getElementById('file-upload').click()">选择电子书</button>
+            </section>
+
+            <h1>我的书架</h1>
+            <div class="book-grid" role="list">
+                ${books.map((book, index) => `
+                    <div class="book-card" role="listitem">
+                        <h2 style="font-size: 1.2rem;">${book.title}</h2>
+                        <p>来源：${book.author}</p>
+                        <button class="btn" onclick="showTOC(${index})">开始阅读</button>
+                        ${!book.id.startsWith('default') ? `<button class="btn btn-outline" style="margin-top:10px; font-size:0.8rem;" onclick="deleteBook('${book.id}')">删除</button>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    function deleteBook(id) {
+        const localBooks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+        const filtered = localBooks.filter(b => b.id !== id);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+        showShelf();
+    }
+
+    function showTOC(index) {
+        const book = books[index];
+        const root = document.getElementById('app-root');
+        document.getElementById('nav-title').textContent = book.title;
+        document.getElementById('btn-shelf').style.display = 'block';
+
+        root.innerHTML = `
+            <h1>${book.title}</h1>
+            <nav aria-label="目录">
+                <ul style="list-style:none; padding:0;">
+                    ${book.chapters.map((ch, chIdx) => `
+                        <li style="border-bottom:1px solid #eee; padding:12px 0;">
+                            <a href="#" onclick="showChapter(${index}, ${chIdx}); return false;" style="text-decoration:none; color:inherit; display:block; font-size:1.1rem;">
+                                ${ch.title}
+                            </a>
+                        </li>
+                    `).join('')}
+                </ul>
+            </nav>
+        `;
+    }
+
+    function showChapter(bookIdx, chIdx) {
+        const book = books[bookIdx];
+        const chapter = book.chapters[chIdx];
+        const root = document.getElementById('app-root');
+        document.getElementById('nav-title').textContent = chapter.title;
+
+        root.innerHTML = `
+            <article>
+                <h1 id="ch-title" tabindex="-1" style="color: var(--accent-color);">${chapter.title}</h1>
+                <div class="content-area" role="region" aria-label="正文内容">${chapter.content}</div>
+            </article>
+            <nav class="nav-footer">
+                ${chIdx > 0 ? `<button class="btn btn-outline" onclick="showChapter(${bookIdx}, ${chIdx-1})">上一章</button>` : '<span></span>'}
+                <button class="btn btn-outline" onclick="showTOC(${bookIdx})">目录</button>
+                ${chIdx < book.chapters.length - 1 ? `<button class="btn btn-outline" onclick="showChapter(${bookIdx}, ${chIdx+1})">下一章</button>` : '<span></span>'}
+            </nav>
+        `;
+        window.scrollTo(0,0);
+        setTimeout(() => document.getElementById('ch-title').focus(), 100);
+    }
+
+    window.onload = showShelf;
+</script>
+
+</body>
+</html>
+
