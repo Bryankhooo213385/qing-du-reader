@@ -3,30 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>清读 - 多格式电子书阅读器</title>
-    <!-- 引入解析库：PDF.js, JSZip 和 Epub.js -->
+    <title>清读 - 纯净无障碍阅读器</title>
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+
     <style>
         :root {
-            --bg-color: #ffffff;
+            --bg-color: #f8f9fa;
             --text-color: #1a1a1a;
             --accent-color: #0056b3;
-            --nav-bg: #f8f9fa;
+            --card-bg: #ffffff;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #121212;
+                --text-color: #e0e0e0;
+                --accent-color: #90caf9;
+                --card-bg: #1e1e1e;
+            }
         }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             line-height: 1.8;
             margin: 0;
-            padding: 0;
             background-color: var(--bg-color);
             color: var(--text-color);
         }
 
+        /* 辅助功能：增强聚焦可见性 */
+        :focus {
+            outline: 4px solid var(--accent-color);
+            outline-offset: 2px;
+        }
+
         header {
-            background-color: var(--nav-bg);
+            background-color: var(--card-bg);
             padding: 1rem;
             border-bottom: 1px solid #ddd;
             display: flex;
@@ -37,46 +53,31 @@
             z-index: 100;
         }
 
-        .btn {
-            padding: 0.6rem 1.2rem;
-            background-color: var(--accent-color);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 1rem;
-        }
-
-        .btn-outline {
-            background-color: transparent;
-            color: var(--accent-color);
-            border: 1px solid var(--accent-color);
-        }
-
         main {
             max-width: 800px;
             margin: 0 auto;
             padding: 1.5rem;
         }
 
-        .book-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 1.5rem;
-            margin-top: 1.5rem;
+        .btn {
+            padding: 0.8rem 1.5rem;
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: bold;
         }
 
-        .book-card {
-            border: 1px solid #eee;
-            padding: 1.5rem;
-            border-radius: 12px;
-            text-align: center;
-            background: #fff;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        .btn-outline {
+            background-color: transparent;
+            color: var(--accent-color);
+            border: 2px solid var(--accent-color);
         }
 
         .import-section {
-            background: #eef2f7;
+            background: var(--card-bg);
             padding: 2rem;
             border-radius: 12px;
             text-align: center;
@@ -84,293 +85,244 @@
             margin-bottom: 2rem;
         }
 
-        .content-area {
-            font-size: 1.3rem;
-            white-space: pre-wrap; 
-            word-wrap: break-word;
-            word-break: break-all;
+        /* 阅读正文区域：关键在于 P 标签的间隔 */
+        .content-area p {
+            margin-bottom: 1.5rem;
+            font-size: 1.25rem;
             text-align: justify;
-        }
-
-        .nav-footer {
-            margin-top: 3rem;
-            padding: 1.5rem 0;
-            border-top: 1px solid #eee;
-            display: flex;
-            justify-content: space-between;
         }
 
         .loading-overlay {
             display: none;
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255,255,255,0.9);
+            background: rgba(0,0,0,0.8);
+            color: white;
             justify-content: center;
             align-items: center;
-            z-index: 1000;
             flex-direction: column;
+            z-index: 2000;
         }
 
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bg-color: #121212;
-                --text-color: #e0e0e0;
-                --nav-bg: #1e1e1e;
-                --accent-color: #90caf9;
-            }
-            .book-card { background: #1e1e1e; border-color: #333; }
-            .import-section { background: #1a1a1a; }
-            .loading-overlay { background: rgba(0,0,0,0.85); }
+        .book-item {
+            background: var(--card-bg);
+            padding: 1.2rem;
+            margin-bottom: 1rem;
+            border-radius: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid #ddd;
         }
     </style>
 </head>
 <body>
 
-<div id="loading" class="loading-overlay" aria-live="assertive">
-    <div style="font-size: 1.2rem; margin-bottom: 10px;">正在解析书籍内容...</div>
-    <div id="loading-detail" style="font-size: 0.9rem; opacity: 0.8;">解析 EPUB 章节可能需要一点时间</div>
+<div id="loading" class="loading-overlay" role="alert" aria-busy="true">
+    <div style="font-size: 1.5rem;" id="loading-msg">正在努力解析书籍...</div>
+    <div id="progress" style="margin-top:10px;">进度: 0%</div>
 </div>
 
 <header>
-    <div id="nav-title" style="font-weight: bold;">清读</div>
-    <nav>
-        <button class="btn btn-outline" onclick="showShelf()" id="btn-shelf" style="display:none;">回到书架</button>
-    </nav>
+    <div id="nav-title" role="heading" aria-level="1" style="font-weight: bold;">清读书架</div>
+    <button class="btn btn-outline" onclick="showShelf()" id="btn-shelf" style="display:none;">返回书架</button>
 </header>
 
-<main id="app-root"></main>
+<main id="app-root" aria-live="polite"></main>
 
 <script>
+    localforage.config({ name: 'PureRead', storeName: 'books' });
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-    let books = [];
-    const STORAGE_KEY = 'pure_read_local_books';
+    let bookList = [];
+    const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
-    function initData() {
-        const localBooks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-        const defaultBooks = [
-            {
-                id: 'default-1',
-                title: "朝花夕拾 (示例)",
-                author: "鲁迅",
-                chapters: [{ title: "示例", content: "欢迎使用清读。请点击“导入书籍”来添加您自己的 PDF 或 EPUB 文件。" }]
-            }
-        ];
-        books = [...defaultBooks, ...localBooks];
+    // 初始化：加载书单
+    async function init() {
+        bookList = await localforage.getItem('list') || [];
+        showShelf();
     }
 
-    async function handleFileSelect(event) {
-        const file = event.target.files[0];
+    // 显示书架
+    async function showShelf() {
+        const root = document.getElementById('app-root');
+        document.getElementById('nav-title').textContent = "书架";
+        document.getElementById('btn-shelf').style.display = 'none';
+
+        let html = `
+            <section class="import-section">
+                <h2>添加书籍</h2>
+                <p>支持 EPUB 和 PDF 格式</p>
+                <input type="file" id="file-in" accept=".pdf,.epub" style="display:none" onchange="handleFile(event)">
+                <button class="btn" onclick="document.getElementById('file-in').click()">选择电子书</button>
+            </section>
+            <h2 style="margin-top:20px;">我的藏书</h2>
+            <div id="shelf-list"></div>
+        `;
+        root.innerHTML = html;
+
+        const listDiv = document.getElementById('shelf-list');
+        if (bookList.length === 0) {
+            listDiv.innerHTML = "<p>书架空空如也，请先导入书籍。</p>";
+            return;
+        }
+
+        bookList.forEach((book, idx) => {
+            const div = document.createElement('div');
+            div.className = 'book-item';
+            div.innerHTML = `
+                <div style="flex:1;">
+                    <div style="font-weight:bold; font-size:1.1rem;">${book.title}</div>
+                    <div style="font-size:0.9rem; opacity:0.7;">${book.author}</div>
+                </div>
+                <button class="btn" onclick="openBook('${book.id}')">阅读</button>
+                <button class="btn btn-outline" style="margin-left:8px; border-color:red; color:red;" onclick="deleteBook('${book.id}')">删除</button>
+            `;
+            listDiv.appendChild(div);
+        });
+    }
+
+    // 文件处理
+    async function handleFile(e) {
+        const file = e.target.files[0];
         if (!file) return;
 
         const loading = document.getElementById('loading');
         loading.style.display = 'flex';
-
+        
         try {
-            if (file.type === 'application/pdf') {
-                await processPDF(file);
-            } else if (file.name.toLowerCase().endsWith('.epub')) {
-                await processEpub(file);
+            let chapters = [];
+            if (file.name.endsWith('.pdf')) {
+                chapters = await processPDF(file);
             } else {
-                alert("目前支持 PDF 及 EPUB 格式。");
+                chapters = await processEpub(file);
             }
-        } catch (error) {
-            console.error("解析错误:", error);
-            alert("书籍解析失败: " + error.message);
+
+            const bookId = 'id_' + Date.now();
+            const newBook = { id: bookId, title: file.name.replace(/\.[^/.]+$/, ""), author: "本地导入", chapters };
+            
+            // 存入内容
+            await localforage.setItem('content_' + bookId, newBook);
+            // 更新列表
+            bookList.push({ id: newBook.id, title: newBook.title, author: newBook.author });
+            await localforage.setItem('list', bookList);
+            
+            showShelf();
+        } catch (err) {
+            alert("解析失败: " + err.message);
         } finally {
             loading.style.display = 'none';
         }
     }
 
+    // PDF 解析逻辑 (带防卡死)
     async function processPDF(file) {
-        const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
-        let chapters = [];
+        const buffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument(buffer).promise;
+        let res = [];
         for (let i = 1; i <= pdf.numPages; i++) {
+            await sleep(30); // 给浏览器喘息时间
+            document.getElementById('progress').textContent = `进度: ${Math.round((i/pdf.numPages)*100)}%`;
             const page = await pdf.getPage(i);
-            const textContent = await page.getTextContent();
-            let lastY = -1;
-            let pageText = "";
-            for (let item of textContent.items) {
-                const currentY = item.transform[5];
-                if (lastY !== -1 && Math.abs(lastY - currentY) > 5) pageText += "\n";
-                else if (lastY !== -1) pageText += " ";
-                pageText += item.str;
-                lastY = currentY;
-            }
-            chapters.push({ title: `第 ${i} 页`, content: pageText.trim() });
+            const text = await page.getTextContent();
+            const content = text.items.map(s => s.str).join(" ");
+            // 针对旁白优化：将每一页包装在 P 标签内
+            res.push({ title: `第 ${i} 页`, content: `<p>${content}</p>` });
         }
-        saveBook(file.name.replace('.pdf', ''), "PDF 导入", chapters);
+        return res;
     }
 
+    // EPUB 解析逻辑 (针对旁白切段优化)
     async function processEpub(file) {
-        const arrayBuffer = await file.arrayBuffer();
-        const book = ePub(arrayBuffer);
-        
+        const buffer = await file.arrayBuffer();
+        const book = ePub(buffer);
         await book.ready;
-        
-        const navigation = await book.loaded.navigation;
         const spine = book.spine;
-        
-        let chapters = [];
-        
+        let res = [];
+
         for (let i = 0; i < spine.items.length; i++) {
+            await sleep(50);
+            document.getElementById('progress').textContent = `进度: ${Math.round((i/spine.items.length)*100)}%`;
             const item = spine.items[i];
+            const doc = await loadEpubItem(book, item.href);
             
-            try {
-                // 使用更兼容的方式读取内容
-                const contents = await book.load(item.href);
-                let doc;
-
-                // 兼容处理：epub.js 有时返回字符串，有时返回文档对象
-                if (typeof contents === 'string') {
-                    const parser = new DOMParser();
-                    // 优先尝试 XML/XHTML 模式
-                    doc = parser.parseFromString(contents, 'application/xhtml+xml');
-                    // 如果解析错误，尝试 HTML 模式
-                    if (doc.querySelector("parsererror")) {
-                        doc = parser.parseFromString(contents, 'text/html');
+            if (doc && doc.body) {
+                // 核心：提取语义化标签，确保旁白一滑一段
+                let html = "";
+                const nodes = doc.body.querySelectorAll('h1, h2, h3, h4, p, li');
+                nodes.forEach(n => {
+                    const txt = n.innerText.trim();
+                    if (txt) {
+                        const tag = n.tagName.toLowerCase();
+                        html += `<${tag}>${txt}</${tag}>`;
                     }
-                } else if (contents instanceof Document) {
-                    doc = contents;
-                } else {
-                    continue;
+                });
+
+                // 兜底：如果没标签，手动按行切分
+                if (!html) {
+                    const lines = doc.body.innerText.split(/\n+/);
+                    lines.forEach(l => { if(l.trim()) html += `<p>${l.trim()}</p>`; });
                 }
 
-                if (!doc || !doc.body) continue;
-
-                // 获取标题
-                let chTitle = "章节 " + (i + 1);
-                const navItem = navigation.get(item.href);
-                if (navItem && navItem.label) {
-                    chTitle = navItem.label.trim();
-                } else if (doc.title && doc.title.trim().length > 0) {
-                    chTitle = doc.title.trim();
-                }
-
-                // 提取文本 (优先使用 textContent，因为它在非渲染 DOM 中更可靠)
-                let text = doc.body.textContent;
-                
-                if (text && text.trim().length > 0) {
-                    chapters.push({
-                        title: chTitle,
-                        // 简单的格式清理：合并过多空行，但保留段落感
-                        content: text.trim().replace(/\n\s*\n/g, '\n\n')
-                    });
-                } else {
-                    // 如果没有文字，检查是否是图片页
-                    const imgs = doc.querySelectorAll('img, image');
-                    if (imgs.length > 0) {
-                        chapters.push({
-                            title: chTitle,
-                            content: `[本章节含有 ${imgs.length} 张图片，无法在纯文本模式下显示]`
-                        });
-                    }
-                }
-            } catch (e) {
-                console.warn("跳过无法解析的章节:", item.href, e);
+                if (html) res.push({ title: `章节 ${i+1}`, content: html });
             }
         }
+        return res;
+    }
 
-        if (chapters.length === 0) throw new Error("无法从该 EPUB 中提取文字，请确认文件未加密且包含文字内容。");
+    async function loadEpubItem(book, href) {
+        const raw = await book.load(href);
+        if (raw instanceof Document) return raw;
+        return new DOMParser().parseFromString(raw, 'application/xhtml+xml');
+    }
+
+    // 阅读与导航
+    async function openBook(id) {
+        const book = await localforage.getItem('content_' + id);
+        if (!book) return;
         
-        saveBook(file.name.replace('.epub', ''), "EPUB 导入", chapters);
-    }
-
-    function saveBook(title, author, chapters) {
-        const newBook = {
-            id: Date.now().toString(),
-            title: title,
-            author: author,
-            chapters: chapters
-        };
-        const localBooks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-        localBooks.push(newBook);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(localBooks));
-        showShelf();
-    }
-
-    function showShelf() {
-        initData();
-        const root = document.getElementById('app-root');
-        document.getElementById('nav-title').textContent = "书架";
-        document.getElementById('btn-shelf').style.display = 'none';
-
-        root.innerHTML = `
-            <section class="import-section">
-                <h2>导入书籍</h2>
-                <p>支持 PDF 及 EPUB 格式</p>
-                <input type="file" id="file-upload" accept=".pdf,.epub" style="display:none" onchange="handleFileSelect(event)">
-                <button class="btn" onclick="document.getElementById('file-upload').click()">选择电子书</button>
-            </section>
-
-            <h1>我的书架</h1>
-            <div class="book-grid" role="list">
-                ${books.map((book, index) => `
-                    <div class="book-card" role="listitem">
-                        <h2 style="font-size: 1.2rem;">${book.title}</h2>
-                        <p>来源：${book.author}</p>
-                        <button class="btn" onclick="showTOC(${index})">开始阅读</button>
-                        ${!book.id.startsWith('default') ? `<button class="btn btn-outline" style="margin-top:10px; font-size:0.8rem;" onclick="deleteBook('${book.id}')">删除</button>` : ''}
-                    </div>
-                `).join('')}
-            </div>
-        `;
-    }
-
-    function deleteBook(id) {
-        const localBooks = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-        const filtered = localBooks.filter(b => b.id !== id);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
-        showShelf();
-    }
-
-    function showTOC(index) {
-        const book = books[index];
         const root = document.getElementById('app-root');
         document.getElementById('nav-title').textContent = book.title;
         document.getElementById('btn-shelf').style.display = 'block';
 
-        root.innerHTML = `
-            <h1>${book.title}</h1>
-            <nav aria-label="目录">
-                <ul style="list-style:none; padding:0;">
-                    ${book.chapters.map((ch, chIdx) => `
-                        <li style="border-bottom:1px solid #eee; padding:12px 0;">
-                            <a href="#" onclick="showChapter(${index}, ${chIdx}); return false;" style="text-decoration:none; color:inherit; display:block; font-size:1.1rem;">
-                                ${ch.title}
-                            </a>
-                        </li>
-                    `).join('')}
-                </ul>
-            </nav>
-        `;
+        let html = `<h1 id="top-h">${book.title}</h1><nav aria-label="目录"><ul style="list-style:none; padding:0;">`;
+        book.chapters.forEach((ch, i) => {
+            html += `<li style="margin:15px 0;"><button class="btn btn-outline" style="width:100%; text-align:left;" onclick="readChapter('${id}', ${i})">${ch.title}</button></li>`;
+        });
+        html += `</ul></nav>`;
+        root.innerHTML = html;
+        document.getElementById('top-h').focus();
     }
 
-    function showChapter(bookIdx, chIdx) {
-        const book = books[bookIdx];
-        const chapter = book.chapters[chIdx];
+    async function readChapter(id, idx) {
+        const book = await localforage.getItem('content_' + id);
+        const ch = book.chapters[idx];
         const root = document.getElementById('app-root');
-        document.getElementById('nav-title').textContent = chapter.title;
 
         root.innerHTML = `
             <article>
-                <h1 id="ch-title" tabindex="-1" style="color: var(--accent-color);">${chapter.title}</h1>
-                <div class="content-area" role="region" aria-label="正文内容">${chapter.content}</div>
+                <h1 id="ch-h" tabindex="-1">${ch.title}</h1>
+                <div class="content-area">${ch.content}</div>
             </article>
-            <nav class="nav-footer">
-                ${chIdx > 0 ? `<button class="btn btn-outline" onclick="showChapter(${bookIdx}, ${chIdx-1})">上一章</button>` : '<span></span>'}
-                <button class="btn btn-outline" onclick="showTOC(${bookIdx})">目录</button>
-                ${chIdx < book.chapters.length - 1 ? `<button class="btn btn-outline" onclick="showChapter(${bookIdx}, ${chIdx+1})">下一章</button>` : '<span></span>'}
-            </nav>
+            <div style="margin-top:30px; display:flex; justify-content:space-between;">
+                ${idx > 0 ? `<button class="btn" onclick="readChapter('${id}', ${idx-1})">上一章</button>` : '<span></span>'}
+                <button class="btn btn-outline" onclick="openBook('${id}')">目录</button>
+                ${idx < book.chapters.length - 1 ? `<button class="btn" onclick="readChapter('${id}', ${idx+1})">下一章</button>` : '<span></span>'}
+            </div>
         `;
         window.scrollTo(0,0);
-        setTimeout(() => document.getElementById('ch-title').focus(), 100);
+        setTimeout(() => document.getElementById('ch-h').focus(), 100);
     }
 
-    window.onload = showShelf;
-</script>
+    async function deleteBook(id) {
+        if (!confirm("确定删除吗？")) return;
+        bookList = bookList.filter(b => b.id !== id);
+        await localforage.setItem('list', bookList);
+        await localforage.removeItem('content_' + id);
+        showShelf();
+    }
 
+    window.onload = init;
+</script>
 </body>
 </html>
-
